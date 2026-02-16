@@ -122,7 +122,10 @@ export const useGraphBase = () => {
         yType = "-",
         xAutotick = false,
         noData = false,
-        showLegend
+        showLegend,
+        logs = [],
+        jobStartTime = 0,
+        interval = 5
     }: {
         dataCount: number;
         yTitle?: string;
@@ -134,6 +137,9 @@ export const useGraphBase = () => {
         xAutotick?: Plotly.LayoutAxis["autotick"];
         noData?: boolean;
         showLegend?: boolean;
+        logs?: any[];
+        jobStartTime?: number;
+        interval?: number;
     }): Partial<Plotly.Layout> => {
         let layout = deepClone(defaultLayout);
         // always retrieve current colors as they may change when switching themes
@@ -197,6 +203,67 @@ export const useGraphBase = () => {
         }
 
         if (layout.margin && !xTitle) layout.margin.b = 40;
+
+        // Generate shapes for logs if available
+        layout.shapes = [];
+        if (logs && logs.length > 0 && jobStartTime > 0) {
+            console.log('Creating log shapes with jobStartTime:', jobStartTime, 'interval:', interval);
+            
+            for (const log of logs) {
+                try {
+                    // Log timestamp is already in Unix seconds (converted from microseconds in Graph.vue)
+                    const logTimestamp = log.timestamp;
+                    
+                    // Calculate the relative position: (logTime - startTime) / interval = index
+                    const relativeSeconds = logTimestamp - jobStartTime;
+                    const indexPosition = Math.floor(relativeSeconds / interval);
+                    
+                    console.log('Log:', log.message, 'timestamp:', logTimestamp, 'relativeSeconds:', relativeSeconds, 'indexPosition:', indexPosition);
+                    
+                    // Skip logs that are outside the graph range
+                    if (indexPosition < 0 || indexPosition >= dataCount) {
+                        console.log('Skipping log outside range:', indexPosition, 'dataCount:', dataCount);
+                        continue;
+                    }
+                    
+                    // Determine color based on log message content
+                    let lineColor = 'rgb(255, 165, 0)'; // Orange for default
+                    const message = (log.message || '').toLowerCase();
+                    if (message.includes('error')) {
+                        lineColor = 'rgb(255, 0, 0)'; // Red for error
+                    } else if (message.includes('warning')) {
+                        lineColor = 'rgb(255, 165, 0)'; // Orange for warning
+                    } else if (message.includes('start') || message.includes('end')) {
+                        lineColor = 'rgb(0, 200, 100)'; // Green for start/end markers
+                    } else if (message.includes('step')) {
+                        lineColor = 'rgb(100, 150, 255)'; // Blue for step markers
+                    }
+                    
+                    layout.shapes!.push({
+                        type: 'line',
+                        x0: indexPosition,
+                        y0: 0,
+                        x1: indexPosition,
+                        y1: 1,
+                        xref: 'x',
+                        yref: 'paper',
+                        line: {
+                            color: lineColor,
+                            width: 2,
+                            dash: 'dash'
+                        },
+                        label: {
+                            text: log.message,
+                            yanchor: 'top',
+                        },
+                    });
+                } catch (e) {
+                    console.warn('Error processing log for shape:', log, e);
+                }
+            }
+            
+            console.log('Created', layout.shapes.length, 'log shapes');
+        }
 
         return layout;
     };

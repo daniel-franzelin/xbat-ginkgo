@@ -5,6 +5,7 @@ HOME_BASE_PATH = Path(".xbat")
 HOME_JOBSCRIPT_PATH = "jobscripts"
 HOME_LOG_PATH = "logs"
 HOME_OUTPUT_PATH = "outputs"
+HOME_TIMESTAMPS_PATH = "timestamps"
 
 
 def get_xbat_directories(homedir):
@@ -19,19 +20,22 @@ def get_xbat_directories(homedir):
     external_jobscripts = external_base / HOME_JOBSCRIPT_PATH
     external_logs = external_base / HOME_LOG_PATH
     external_output = external_base / HOME_OUTPUT_PATH
+    external_ts = external_base / HOME_TIMESTAMPS_PATH
 
     internal_base = HOME_MOUNT_PREFIX / str(external_base).lstrip("/")
 
     internal_jobscripts = internal_base / HOME_JOBSCRIPT_PATH
     internal_logs = internal_base / HOME_LOG_PATH
     internal_output = internal_base / HOME_OUTPUT_PATH
+    internal_ts = internal_base / HOME_TIMESTAMPS_PATH
 
     return {
         "external": {
             "base": external_base,
             "jobscripts": external_jobscripts,
             "logs": external_logs,
-            "outputs": external_output
+            "outputs": external_output,
+            "timestamps": external_ts,
         },
         # warning: submission.py:submit iterates over this list and changes owner and permissions
         "internal": {
@@ -39,5 +43,6 @@ def get_xbat_directories(homedir):
             "jobscripts": internal_jobscripts,
             "logs": internal_logs,
             "outputs": internal_output,
+            "timestamps": internal_ts,
         }
     }

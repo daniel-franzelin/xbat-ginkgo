@@ -340,6 +340,39 @@ paths:
       security:
         - oauth2:
             - benchmarks_r
+  /jobs/{jobId}/logs:
+    get:
+      operationId: backend.restapi.api.jobs.get_logs
+      tags:
+        - jobs
+      summary: Returns logs of specified job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - name: runNr
+          in: query
+          schema:
+            type: integer
+          required: false
+          description: Optional run number to filter logs
+      responses:
+        "200":
+          description: Retrieved Logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: integer
+                  runNr:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      type: object
+      # security:
+      #   - oauth2:
+      #       - benchmarks_r
   /nodes:
     get:
       operationId: backend.restapi.api.nodes.get_all

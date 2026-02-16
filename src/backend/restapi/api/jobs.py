@@ -332,3 +332,26 @@ def register(jobId):
         "enableLikwid": enable_likwid,
         "benchmarkRequired": hash_missing
     }, 200
+
+def get_logs(jobId, runNr=None):
+    """
+    Retrieves job logs for specific jobId.
+    
+    :param jobId: job id
+    :param runNr: optional run number to filter logs
+    :return: logs with meta data
+    """
+    query = {"jobnr": jobId}
+
+    if runNr is not None:
+        query["runnr"] = runNr
+    result = db.getOne("benchmarks_data", query)
+
+    if result is None:
+        return {"jobId": jobId, "runNr": runNr, "logs": []}, 200
+
+    return {
+        "jobId": result.get("jobnr"),
+        "runNr": result.get("runnr"),
+        "logs": result.get("benchmarks", [])
+    }, 200

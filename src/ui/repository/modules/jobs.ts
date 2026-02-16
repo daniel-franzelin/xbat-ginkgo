@@ -144,6 +144,18 @@ class JobModule extends FetchFactory {
 
         return this.call<NodeMap>("GET", url, undefined) as Promise<NodeMap>;
     }
+    
+    async get_logs(jobId: number, runNr?: number) {
+        return this.call<{
+            jobId: number;
+            runNr?: number;
+            logs: Array<[string, string]>;
+        }>(
+            "GET",
+            `${this.RESOURCE}/${jobId}/logs` + (runNr !== undefined ? `?runNr=${runNr}` : ""),
+            undefined // body
+        );
+    }
 }
 
 export default JobModule;

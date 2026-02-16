@@ -40,6 +40,7 @@ export interface GraphQuery {
     metric: string;
     level: GraphLevel;
     deciles: boolean;
+    logLevel?: string;
 }
 
 export interface GraphSettings {
@@ -63,6 +64,7 @@ export interface GraphModifiers {
     operator1: null | string;
     systemBenchmarks: string[];
     systemBenchmarksScalingFactor: number;
+    logFilter: string[] | null;
 }
 
 export interface Trace {

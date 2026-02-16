@@ -100,11 +100,15 @@ export const useGraph = () => {
             dataCount: number;
             unit: string;
             traceCount: number;
+            interval: number;
+            startTime: number;
         } = {
             traces: [],
             dataCount: 0,
             unit: unifiedUnit,
-            traceCount: 0
+            traceCount: 0,
+            interval: 5,
+            startTime: 0
         };
 
         for (const { jobId, prefix } of unitInfoList) {
@@ -122,6 +126,11 @@ export const useGraph = () => {
             all.traces.push(...result.traces);
             all.dataCount += result.dataCount;
             all.traceCount += result.traces.length;
+            // Use the interval and startTime from the first job with data
+            if (result.interval && !all.startTime) {
+                all.interval = result.interval;
+                all.startTime = result.startTime || 0;
+            }
         }
 
         // visible traces resets on group/metric/level change -> set all traces to visible initially
@@ -154,7 +163,20 @@ export const useGraph = () => {
                 x.visible = x.uid ? vis.has(x.uid) : true;
             });
         }
-
+        console.log("LogLevel before createLayout: ", storeGraph.query.value.logLevel, " logs:", storeGraph.logs.value, " with startTime: " + all.startTime);
+        
+        // Filter logs based on logFilter modifier (now supports multiple selections)
+        let filteredLogs = storeGraph.logs.value || [];
+        const logFilter = storeGraph.modifiers.value.logFilter;
+        if (logFilter && logFilter.length > 0) {
+            filteredLogs = filteredLogs.filter((log: any) => {
+                const message = (log.message || '').toUpperCase();
+                // Check if any of the selected filters match the log message
+                return logFilter.some(filter => message.includes(filter.toUpperCase()));
+            });
+            console.log("Filtered logs:", filteredLogs.length, "of", storeGraph.logs.value.length, "with filters:", logFilter);
+        }
+        
         const layout = createLayout({
             dataCount: Math.max(all.dataCount),
             yTitle: `${query.metric}${all.unit ? ` [${all.unit}]` : ""}`,
@@ -164,7 +186,12 @@ export const useGraph = () => {
             autorange: all.unit != "%",
             rangeslider: storeGraph.preferences.value.rangeslider,
             noData: storeGraph.noData.value || !all.traces.length,
-            showLegend: styling?.showLegend ?? true
+            showLegend: styling?.showLegend ?? true,
+            logs: storeGraph.query.value.logLevel && storeGraph.query.value.logLevel !== "None" 
+                ? filteredLogs 
+                : [],
+            jobStartTime: all.startTime,
+            interval: all.interval
         });
 
         // TODO fix ts
@@ -206,7 +233,9 @@ export const useGraph = () => {
                 dataCount: 0,
                 unit: "",
                 baseUnit: "",
-                unitIndex: 0
+                unitIndex: 0,
+                interval: 5,
+                startTime: 0
             };
 
         let measurements = result.traces;
@@ -545,12 +574,19 @@ export const useGraph = () => {
             }
         }
 
+        // Get start time from first trace (measurements have start date)
+        const startTime = measurements[0]?.start 
+            ? new Date(measurements[0].start).getTime() / 1000 
+            : 0;
+        console.log("Assembled graph for job", jobId, "with", traces.length, "traces, startTime:", startTime, " original start: ", measurements[0]?.start, " date version:", measurements[0]?.start ? new Date(measurements[0].start) : "N/A");
         return {
             traces,
             dataCount,
             unit,
             baseUnit: parsedUnit.base,
-            unitIndex: parsedUnit.index
+            unitIndex: parsedUnit.index,
+            interval,
+            startTime
         };
     };
 

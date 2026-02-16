@@ -73,6 +73,68 @@
                         >
                         </v-autocomplete>
                     </v-col>
+                    <v-col md="2" sm="6">
+                        <v-autocomplete
+                            v-model="form.logLevel"
+                            label="Log Level"
+                            :disabled="
+                                !form.metric ||
+                                storeGraph.loading.value ||
+                                !metricLevels.length ||
+                                props.comparisonMode
+                            "
+                            :items="logLevels"
+                            hide-details
+                        >
+                        </v-autocomplete>
+                    </v-col>
+                    <v-col md="3" sm="6" v-show="form.logLevel && form.logLevel !== 'None'">
+                        <v-autocomplete
+                            v-model="logFilterInput"
+                            label="Filter Logs"
+                            placeholder="Select logs..."
+                            :items="availableLogNames"
+                            hide-details
+                            clearable
+                            multiple
+                            chips
+                            closable-chips
+                            density="compact"
+                            prepend-inner-icon="$filter"
+                            :disabled="storeGraph.loading.value"
+                            @update:model-value="debouncedLogFilter"
+                            :menu-props="{ maxHeight: 300 }"
+                        >
+                            <template v-slot:item="{ props, item }">
+                                <v-list-item
+                                    v-bind="props"
+                                    :title="item.raw.title"
+                                    :subtitle="item.raw.subtitle"
+                                    density="compact"
+                                >
+                                    <template #prepend="{ isActive }">
+                                        <v-checkbox-btn :model-value="isActive" />
+                                    </template>
+                                    <template #append>
+                                        <v-icon
+                                            :color="item.raw.color"
+                                            size="small"
+                                        >mdi-circle</v-icon>
+                                    </template>
+                                </v-list-item>
+                            </template>
+                            <template v-slot:chip="{ props, item }">
+                                <v-chip
+                                    v-bind="props"
+                                    :color="item.raw.color"
+                                    size="small"
+                                    label
+                                >
+                                    {{ item.raw.title }}
+                                </v-chip>
+                            </template>
+                        </v-autocomplete>
+                    </v-col>
                     <v-col md="3" sm="6">
                         <v-autocomplete
                             v-show="form.level !== 'job'"
@@ -134,6 +196,7 @@ import type { GraphLevel } from "~/types/graph";
 
 const { $graphStore } = useNuxtApp();
 const graphRef = ref(null);
+const { $api } = useNuxtApp();
 
 type RelayoutData = {
     [key: string]: number;
@@ -198,7 +261,7 @@ const nodeNames = computed(() =>
 );
 
 watch(
-    [() => props.jobIds, ...Object.keys(form).map((x) => () => form[x])],
+    [() => props.jobIds, () => form.group, () => form.metric, () => form.level, () => form.node],
     () => {
         if (!props.graphId || !form.group || !form.metric || !form.level)
             return;
@@ -209,12 +272,17 @@ watch(
         )
             return;
 
+        // Preserve the current logLevel when creating a new query
+        const currentLogLevel = storeGraph.query.value.logLevel || "None";
+        
         const q = $graphStore.createQuery(
             props.jobIds,
             form.group,
             form.metric,
             form.level as GraphLevel,
-            form.node || ""
+            form.node || "",
+            false, // deciles
+            currentLogLevel
         );
 
         if (Object.keys(q).length) storeGraph.query.value = q;
@@ -227,7 +295,64 @@ watchEffect(() => {
     form.metric = storeGraph.query.value.metric || null;
     form.level = storeGraph.query.value.level || null;
     form.node = storeGraph.query.value.node || null;
+    // Don't sync logLevel here - it's managed separately by the logLevel watcher
 });
+
+watch(
+    () => form.logLevel,
+    async (newValue, oldValue) => {
+        // Skip if no actual change
+        if (newValue === oldValue) return;
+        
+        console.log("logLevel changed:", oldValue, "->", newValue);
+        
+        if (!newValue || newValue === "None") {
+            storeGraph.logs.value = [];
+            // Update query with new logLevel and trigger graph update
+            const currentQuery = storeGraph.query.value;
+            if (currentQuery.logLevel !== newValue) {
+                storeGraph.query.value = { ...currentQuery, logLevel: newValue || "None" };
+            }
+            storeGraph.updateGraph();
+            return;
+        }
+
+        const jobId = storeGraph.query.value.jobIds?.[0];
+        if (!jobId) return;
+
+        storeGraph.loading.value = true;
+        try {
+            const response = await $api.jobs.get_logs(jobId);
+            console.log("Fetched logs:", response);
+            
+            // Parse logs from API response - format: [[timestamp, message], ...]
+            const parsedLogs = (response?.logs || []).map((log: [string, string]) => ({
+                timestamp: parseInt(log[0]) / 1000000, // Convert microseconds to seconds
+                message: log[1]
+            }));
+            
+            // Set logs first
+            storeGraph.logs.value = parsedLogs;
+            
+            // Update query with new logLevel (this will NOT trigger updateData because logLevel is excluded from that watch)
+            const currentQuery = storeGraph.query.value;
+            if (currentQuery.logLevel !== newValue) {
+                storeGraph.query.value = { ...currentQuery, logLevel: newValue };
+            }
+            
+            // Manually trigger graph update to show the logs
+            storeGraph.updateGraph();
+            
+            console.log("Logs set and graph updated. Query:", storeGraph.query.value);
+            console.log("Stored logs:", storeGraph.logs.value);
+        } catch (error) {
+            console.error("Failed to fetch logs:", error);
+            storeGraph.logs.value = [];
+        } finally {
+            storeGraph.loading.value = false;
+        }
+    }
+);
 
 const multiNode = computed(
     () => nodeNames.value.length > 1 && form.level != "job"

@@ -27,7 +27,13 @@ def get_current_datetime_str():
 
 
 def unix_ts_to_datetime(ts):
-    return datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc)
+    ts_val = int(ts)
+    # Ein Timestamp in Sekunden hat aktuell 10 Stellen.
+    # Mikrosekunden haben 16 Stellen.
+    if ts_val > 1e12: 
+        ts_val /= 1e6
+        
+    return datetime.datetime.fromtimestamp(ts_val, tz=datetime.timezone.utc)
 
 
 def unix_ts_to_datetime_str(ts):

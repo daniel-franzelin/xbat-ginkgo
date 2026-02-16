@@ -37,6 +37,7 @@ export interface StoreGraph extends StoreBaseGraph {
     modifiers: GraphModifiers;
     raw: { [key: string]: GraphRawData }; // save by jobId due to multi-job graphs
     settings: GraphSettings;
+    logs: any[];
 }
 
 export type GraphQueryRoofline = {
@@ -72,7 +73,8 @@ const defaultQuery: GraphQuery = {
     group: "",
     metric: "",
     level: "job",
-    deciles: false
+    deciles: false,
+    logLevel: "None"
 };
 
 const defaultGraphQueryRoofline: GraphQueryRoofline = {
@@ -93,7 +95,8 @@ const defaultModifiers: GraphModifiers = {
     filter1: undefined,
     operator1: null,
     systemBenchmarks: [],
-    systemBenchmarksScalingFactor: 1
+    systemBenchmarksScalingFactor: 1,
+    logFilter: null
 };
 
 interface StoreGraphReturnBase {
@@ -115,6 +118,7 @@ export interface StoreGraphReturnDefault extends StoreGraphReturnBase {
     metrics: Ref<Metrics>;
     modifiers: Ref<GraphModifiers>;
     settings: Ref<GraphSettings>;
+    logs: Ref<any[]>;
 }
 
 export interface StoreGraphReturnRoofline extends StoreGraphReturnBase {
@@ -190,7 +194,8 @@ export const useGraphStore = defineStore("graph", () => {
         metric: string = "",
         level: GraphLevel = "job",
         node: string = "",
-        deciles: boolean = false
+        deciles: boolean = false,
+        logLevel: string = "None"
     ): GraphQuery => {
         let query = {
             jobIds: Array.isArray(jobIds) ? jobIds : [jobIds],
@@ -198,7 +203,8 @@ export const useGraphStore = defineStore("graph", () => {
             metric: metric,
             level: level,
             node: level != "job" ? node : "",
-            deciles: deciles
+            deciles: deciles,
+            logLevel: logLevel
         };
         return query;
     };
@@ -212,6 +218,7 @@ export const useGraphStore = defineStore("graph", () => {
                 type: "default",
                 graph: null,
                 query: { ...defaultQuery },
+                prevQuery: { ...defaultQuery },
                 raw: {},
                 settings: { ...defaultSettings },
                 modifiers: { ...defaultModifiers },
@@ -222,7 +229,8 @@ export const useGraphStore = defineStore("graph", () => {
                 },
                 nodes: {},
                 noData: false,
-                loading: false
+                loading: false,
+                logs: []
             };
         else {
             graphs.value[id] = {
@@ -376,6 +384,24 @@ export const useGraphStore = defineStore("graph", () => {
                         }
 
                         const prevQuery = graphRef.value.query;
+                        
+                        // Check if only logLevel changed - in this case, don't refetch data
+                        const onlyLogLevelChange = 
+                            prevQuery.jobIds.toString() === value.jobIds.toString() &&
+                            prevQuery.group === value.group &&
+                            prevQuery.metric === value.metric &&
+                            prevQuery.level === value.level &&
+                            prevQuery.node === value.node &&
+                            prevQuery.deciles === value.deciles &&
+                            prevQuery.logLevel !== value.logLevel;
+                        
+                        if (onlyLogLevelChange) {
+                            // Just update the query without refetching measurements
+                            graphRef.value.query = value;
+                            // updateGraph will be called manually from the logLevel watcher
+                            return;
+                        }
+                        
                         graphRef.value.raw = {};
                         graphRef.value.query = value;
 
@@ -432,6 +458,13 @@ export const useGraphStore = defineStore("graph", () => {
                     get: () => graphRef.value?.metrics || {},
                     set: (value: Metrics) => {
                         graphRef.value.metrics = value;
+                    }
+                }),
+                logs: computed({
+                    get: () => graphRef.value?.logs || [],
+                    set: (value: any[]) => {
+                        graphRef.value.logs = value;
+                        // Don't trigger updateGraph here - it will be called when the graph needs to re-render
                     }
                 }),
 
