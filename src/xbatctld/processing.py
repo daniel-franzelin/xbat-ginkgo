@@ -2,6 +2,7 @@ import logging
 import time
 import traceback
 from bson.objectid import ObjectId
+from pathlib import Path
 
 from shared import exc
 from shared.mongodb import MongoDB
@@ -160,137 +161,108 @@ def _process_job(jobId, directories, job_info):
     },
                   upsert=True)
 
-# def import_log_to_mongodb(file_path: str,
-#     jobnr: int,
-#     runnr: int) -> None:
-#     """
-#     Liest die getimestampte Log-Datei ein und speichert die Benchmark-Daten 
-#     im gewünschten Format (jobnr, runnr, benchmarks) in der Datenbank.
-#     """
+def import_log_to_mongodb(file_path, jobnr: int, runnr: int) -> None:
+    """
+    Liest die getimestampte Log-Datei ein und speichert die Benchmark-Daten
+    im gewünschten Format (jobnr, runnr, summary, logs) in der Datenbank.
     
-#     if not file_path.is_file():
-#         logger.warning(
-#             "Timestamped log file not found at: %s. Skipping log insertion.", 
-#             file_path
-#         )
-#         return
-
-#     parsed_data: List[List[str]] = []
-
-#     # 2. Datei einlesen und Parsen
-#     try:
-#         with open(file_path, 'r') as f:
-#             # Erste Zeile (Header) überspringen
-#             next(f)
-            
-#             # Alle nachfolgenden Zeilen lesen und parsen
-#             for line in f:
-#                 line = line.strip()
-#                 if not line:
-#                     continue
-
-#                 # Nur am ERSTEN Komma splitten: Max 1 Split
-#                 parts = line.split(',', 1)
-                
-#                 if len(parts) == 2:
-#                     # 'parts' ist jetzt [String vor 1. Komma, String nach 1. Komma]
-#                     parsed_data.append(parts)
-#                 else:
-#                     print(f"Warnung: Zeile ignoriert (kein Komma gefunden): {line}")
-
-#     except FileNotFoundError:
-#         print(f"FEHLER: Datei nicht gefunden unter: {file_path}")
-#         return
-#     except Exception as e:
-#         print(f"FEHLER beim Lesen/Parsen der Datei: {e}")
-#         return
-
-#     # 3. Das finale Dokument strukturieren und einfügen
-#     if not parsed_data:
-#         print("Keine Daten zum Einfügen gefunden. Vorgang abgebrochen.")
-#         return
-
-#     # Deine gewünschte Struktur: jobnr, runnr, benchmarks
-#     document = {
-#         "jobnr": jobnr,
-#         "runnr": runnr,
-#         "benchmarks": parsed_data
-#     }
-
-#     try:
-#         db.replaceOne("benchmarks_data", {"jobnr": jobnr}, document, upsert=True)
-#         logger.debug("Successfully inserted log data for job %d, run %d into 'benchmarks_data'", jobnr, runnr)
-#     except Exception as e:
-#         logger.error("Error inserting log data for job %d: %s", jobnr, e)
-def import_log_to_mongodb(file_path: str, jobnr: int, runnr: int) -> None:
-    path = Path(file_path)
-    if not path.is_file():
+    CSV-Format: timestamp_us, HW:thread_id, phase_name, message
+    """
+    file_path = Path(file_path)
+    if not file_path.is_file():
+        logger.warning(
+            "Timestamped log file not found at: %s. Skipping log insertion.",
+            file_path
+        )
         return
 
     raw_events = []
-    phase_stats = defaultdict(lambda: {"start": float('inf'), "end": float('-inf')})
+    phase_stats = {}  # {phase_name: {"start": min_ts, "end": max_ts}}
 
     try:
-        with open(path, 'r') as f:
-            reader = csv.reader(f)
-            next(reader)  # Header überspringen
+        with open(file_path, 'r') as f:
+            # Erste Zeile (Header) überspringen
+            next(f)
+            
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
 
-            for row in reader:
-                if not row or len(row) < 2:
+                parts = line.split(',')
+                if len(parts) < 2:
                     continue
                 
-                # Parsing der Spalten (timestamp_us, thread_id, phase, message)
-                ts = int(row[0])
-                hw = row[1]
-                # Falls 'phase' leer ist, behandeln wir es als allgemeines Event
-                phase_name = row[2].strip() if len(row) > 2 else "General"
-                msg = row[3].strip() if len(row) > 3 else ""
+                # Parsing: timestamp, HW:id, phase, message
+                try:
+                    ts = int(parts[0])
+                except ValueError:
+                    continue
+                
+                # thread_id: "HW:6" -> "6", "-" -> None
+                hw_raw = parts[1].strip() if len(parts) > 1 else "-"
+                if hw_raw == "-":
+                    hw = None
+                elif hw_raw.startswith("HW:"):
+                    hw = hw_raw[3:]
+                else:
+                    hw = hw_raw
+                
+                # phase: "-" -> None
+                phase_raw = parts[2].strip() if len(parts) > 2 else "-"
+                phase_name = None if phase_raw == "-" else phase_raw
+                
+                msg = parts[3].strip() if len(parts) > 3 else ""
 
-                # Event für die Liste speichern
-                event = {
+                # Event speichern
+                raw_events.append({
                     "ts": ts,
                     "hw": hw,
                     "phase": phase_name,
                     "msg": msg
-                }
-                raw_events.append(event)
-
-                # Phasen-Zeiten tracken (Earliest / Latest)
-                if phase_name and phase_name != "Multithread-Test": # "Multithread-Test" ist eher ein Event als eine Zeitphase
-                    if ts < phase_stats[phase_name]["start"]:
-                        phase_stats[phase_name]["start"] = ts
-                    if ts > phase_stats[phase_name]["end"]:
-                        phase_stats[phase_name]["end"] = ts
-
-        # Zusammenfassung der Phasen berechnen
-        phases_summary = []
-        for name, times in phase_stats.items():
-            if times["start"] != float('inf'):
-                phases_summary.append({
-                    "name": name,
-                    "start": times["start"],
-                    "end": times["end"],
-                    "duration_us": times["end"] - times["start"]
                 })
 
-        # Dokument erstellen
+                # Phasen-Zeiten tracken (nur wenn phase vorhanden)
+                if phase_name:
+                    if phase_name not in phase_stats:
+                        phase_stats[phase_name] = {"start": ts, "end": ts}
+                    else:
+                        if ts < phase_stats[phase_name]["start"]:
+                            phase_stats[phase_name]["start"] = ts
+                        if ts > phase_stats[phase_name]["end"]:
+                            phase_stats[phase_name]["end"] = ts
+
+        if not raw_events:
+            logger.warning("No valid data found in log file: %s", file_path)
+            return
+
+        # Zusammenfassung der Phasen
+        phases_summary = []
+        for name, times in phase_stats.items():
+            phases_summary.append({
+                "name": name,
+                "start": times["start"],
+                "end": times["end"],
+                "duration_us": times["end"] - times["start"]
+            })
+
         document = {
             "jobnr": jobnr,
             "runnr": runnr,
-            "summary": {
-                "phases": phases_summary
-            },
+            "summary": {"phases": phases_summary},
             "logs": raw_events
         }
 
-        # In DB speichern (Nutze jobnr + runnr als eindeutigen Key für den Replace)
-        db.replaceOne("benchmarks_data", 
-                      {"jobnr": jobnr, "runnr": runnr}, 
-                      document, 
+        db.replaceOne("benchmarks_data",
+                      {"jobnr": jobnr, "runnr": runnr},
+                      document,
                       upsert=True)
-        
+        logger.debug("Successfully inserted log data for job %d, run %d into 'benchmarks_data'", jobnr, runnr)
+
+    except FileNotFoundError:
+        logger.error("Log file not found: %s", file_path)
     except Exception as e:
-        print(f"Fehler beim Prozess: {e}")
+        logger.error("Error processing log file for job %d: %s", jobnr, e)
 
 def process(runNr):
     """
@@ -416,12 +388,15 @@ def process(runNr):
         result = db.updateOne("benchmarks", {"runNr": runNr},
                      {"$set": benchmark_update})
 
-        print(f"Result : {result}")
+        logger.debug("Benchmark update result: %s", result)
 
-        import_log_to_mongodb(directories['internal']['timestamps'] / f"{benchmark['jobIds'][-1]}.csv",
-            benchmark["jobIds"][-1],
-            runNr)
-        logger.debug("Inserted data for benchmark #%d into database", runNr)
+        # Import timestamp logs only for non-CLI benchmarks (directories is None for CLI) ?? wild AI guess
+        if directories is not None:
+            import_log_to_mongodb(
+                directories['internal']['timestamps'] / f"{benchmark['jobIds'][-1]}.csv",
+                benchmark["jobIds"][-1],
+                runNr
+            )
 
     except Exception as e:
         logger.error("Processing of benchmark #%d failed\n%s\n%s", runNr, e,
