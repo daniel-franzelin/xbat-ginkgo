@@ -5,7 +5,7 @@ import { colors } from "~/utils/colors";
 import { ArrayUtils } from "~/utils/array";
 import { extractNumber } from "~/utils/string";
 import { useGraphBase } from "~/components/graphs/useGraphBase";
-import type { Graph, Trace } from "~/types/graph";
+import type { Graph, Trace, LogEntry, Phase } from "~/types/graph";
 import type { StoreGraphReturnDefault } from "~/store/graph";
 
 const { allTitels: benchmarkTitles } = useNodeBenchmarks();
@@ -163,19 +163,20 @@ export const useGraph = () => {
                 x.visible = x.uid ? vis.has(x.uid) : true;
             });
         }
-        console.log("LogLevel before createLayout: ", storeGraph.query.value.logLevel, " logs:", storeGraph.logs.value, " with startTime: " + all.startTime);
+        console.log("LogLevel before createLayout: ", storeGraph.query.value.logLevel, " logData:", storeGraph.logData.value, " with startTime: " + all.startTime);
         
-        // Filter logs based on logFilter modifier (now supports multiple selections)
-        let filteredLogs = storeGraph.logs.value || [];
+        // Filter logs by phase (logFilter values are phase names)
+        let filteredLogs: LogEntry[] = storeGraph.logData.value?.logs || [];
         const logFilter = storeGraph.modifiers.value.logFilter;
         if (logFilter && logFilter.length > 0) {
-            filteredLogs = filteredLogs.filter((log: any) => {
-                const message = (log.message || '').toUpperCase();
-                // Check if any of the selected filters match the log message
-                return logFilter.some(filter => message.includes(filter.toUpperCase()));
+            filteredLogs = filteredLogs.filter((log: LogEntry) => {
+                const phase = log.phase ?? 'no phase';
+                return logFilter.some(f => phase === f);
             });
-            console.log("Filtered logs:", filteredLogs.length, "of", storeGraph.logs.value.length, "with filters:", logFilter);
         }
+        
+        // Get phases
+        const phases: Phase[] = storeGraph.logData.value?.phases || [];
         
         const layout = createLayout({
             dataCount: Math.max(all.dataCount),
@@ -189,6 +190,9 @@ export const useGraph = () => {
             showLegend: styling?.showLegend ?? true,
             logs: storeGraph.query.value.logLevel && storeGraph.query.value.logLevel !== "None" 
                 ? filteredLogs 
+                : [],
+            phases: storeGraph.query.value.logLevel && storeGraph.query.value.logLevel !== "None"
+                ? phases
                 : [],
             jobStartTime: all.startTime,
             interval: all.interval

@@ -159,3 +159,22 @@ export type GraphOverrides = {
     prefixes: Record<string, string>;
     traces: Record<string, { name?: string; color?: string }>;
 };
+
+export interface LogEntry {
+    ts: number;      // timestamp in microseconds
+    hw: string;      // hardware/thread id
+    phase: string | null;
+    msg: string;
+}
+
+export interface Phase {
+    name: string;
+    start: number;   // timestamp in microseconds
+    end: number;     // timestamp in microseconds
+    duration_us: number;
+}
+
+export interface LogData {
+    logs: LogEntry[];
+    phases: Phase[];
+}

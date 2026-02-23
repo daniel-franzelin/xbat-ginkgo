@@ -84,6 +84,36 @@
                         ></v-divider>
                     </div>
                 </div>
+                <template v-if="hoverText.logs.length">
+                    <v-divider class="mb-2" />
+                    <div class="d-flex flex-column gap-1 mb-2">
+                        <template
+                            v-for="[phase, phaseLogs] of hoverLogsByPhase.entries()"
+                            :key="phase"
+                        >
+                            <!-- Phase header -->
+                            <div
+                                class="d-flex align-center log-phase-header"
+                                :style="`color: ${getLogPhaseColor(phase || null)}`"
+                            >
+                                <div
+                                    class="trace-color"
+                                    :style="`background-color: ${getLogPhaseColor(phase || null)}`"
+                                ></div>
+                                <span class="font-weight-bold">{{ phase || 'no phase' }}</span>
+                            </div>
+                            <!-- Messages within this phase -->
+                            <div
+                                v-for="log of phaseLogs"
+                                :key="log.ts + log.msg"
+                                class="d-flex align-center trace log-entry"
+                            >
+                                <div class="trace-name flex-grow-1 text-medium-emphasis">{{ log.msg }}</div>
+                                <div class="trace-value text-medium-emphasis">{{ toDDHHMMSS(log.ts - logStartTime) }}</div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
                 <div
                     v-show="hoverText.truncated"
                     class="text-medium-emphasis text-caption font-italic"
@@ -96,11 +126,14 @@
 </template>
 <script setup lang="ts">
 import { download, roundTo, deepEqual } from "~/utils/misc";
+import { toDDHHMMSS } from "~/utils/date";
 import { ArrayUtils } from "~/utils/array";
 import { useMouse, useElementHover, useScroll } from "@vueuse/core";
-import { LEGEND_WIDTH } from "@/components/graphs/useGraphBase";
+import { LEGEND_WIDTH, getLogPhaseColor } from "@/components/graphs/useGraphBase";
 import Plotly from "plotly.js-basic-dist-min";
 import { Mutex } from "async-mutex";
+import type { LogEntry } from "~/types/graph";
+import type { StoreGraphReturnDefault } from "~/store/graph";
 
 const plotlySettings = {
     scrollZoom: true,
@@ -146,6 +179,7 @@ const hoverVisible = ref(false);
 const hoverText = reactive<{
     header: string;
     traces: Plotly.PlotData[];
+    logs: LogEntry[];
     highlight: number | null;
     leftOffset: number;
     topOffset: number;
@@ -153,6 +187,7 @@ const hoverText = reactive<{
 }>({
     header: "",
     traces: [],
+    logs: [],
     highlight: null,
     leftOffset: 0,
     topOffset: 0,
@@ -162,6 +197,71 @@ const hoverText = reactive<{
 const handlersRegistered = ref(false);
 
 const currentGraph = ref({});
+
+// Returns the same color used by useGraphBase.ts for log shapes so the hover is consistent.
+// REMOVED – replaced by shared getLogPhaseColor() from useGraphBase.ts
+
+// Builds a map from x-axis index -> log entries for the current graph.
+// Uses the same bucketing logic as useGraphBase.ts to match log groups to positions.
+const logsByIndex = computed(() => {
+    if (props.type !== "default") return new Map<number, LogEntry[]>();
+    const sg = storeGraph as StoreGraphReturnDefault;
+    let logs = sg.logData.value?.logs || [];
+    if (!logs.length) return new Map<number, LogEntry[]>();
+
+    // Apply the same logFilter as useGraph.ts so filtered-out entries don't appear in hover
+    const logFilter = sg.modifiers.value.logFilter;
+    if (logFilter && logFilter.length > 0) {
+        logs = logs.filter((log) => {
+            const phase = log.phase ?? 'no phase';
+            return logFilter.some(f => phase === f);
+        });
+    }
+    if (!logs.length) return new Map<number, LogEntry[]>();
+
+    const rawEntries = Object.values(sg.raw.value);
+    const firstTrace = rawEntries[0]?.traces?.[0];
+    if (!firstTrace) return new Map<number, LogEntry[]>();
+
+    const interval = firstTrace.interval || 5;
+    // start is a Date – convert to Unix seconds
+    const startTime = new Date(firstTrace.start).getTime() / 1000;
+
+    // Group by 20-second buckets relative to job start (mirrors useGraphBase.ts)
+    const logGroups = new Map<number, LogEntry[]>();
+    for (const log of logs) {
+        const bucketKey = Math.floor((log.ts - startTime) / 20);
+        if (!logGroups.has(bucketKey)) logGroups.set(bucketKey, []);
+        logGroups.get(bucketKey)!.push(log);
+    }
+
+    const result = new Map<number, LogEntry[]>();
+    for (const group of logGroups.values()) {
+        const relativeSeconds = group[0].ts - startTime;
+        const indexPosition = Math.floor(relativeSeconds / interval);
+        result.set(indexPosition, group);
+    }
+    return result;
+});
+
+const logStartTime = computed(() => {
+    if (props.type !== "default") return 0;
+    const sg = storeGraph as StoreGraphReturnDefault;
+    const firstTrace = Object.values(sg.raw.value)[0]?.traces?.[0];
+    if (!firstTrace) return 0;
+    return new Date(firstTrace.start).getTime() / 1000;
+});
+
+// Groups the current hover's log entries by phase for display.
+const hoverLogsByPhase = computed(() => {
+    const groups = new Map<string, LogEntry[]>();
+    for (const log of hoverText.logs) {
+        const key = log.phase ?? "";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(log);
+    }
+    return groups;
+});
 
 const getImageBase64 = async (properties: Plotly.ToImgopts) => {
     if (!graphRef.value) return "";
@@ -203,6 +303,7 @@ const registerHandlers = () => {
 
         if (!graphCardRef.value || !graphRef.value || !traces.length) {
             hoverVisible.value = false;
+            hoverText.logs = [];
             return;
         }
 
@@ -233,6 +334,10 @@ const registerHandlers = () => {
                     : CHUNK_SIZE
             )
         ];
+
+        // populate log entries for the hovered x position (optional – only shown when logs exist)
+        const xIndex = data.points[0].pointNumber;
+        hoverText.logs = logsByIndex.value.get(xIndex) ?? [];
         const hoverSize = graphCardRef.value.$el.getBoundingClientRect();
 
         if (!graphSize.value) return;
@@ -400,6 +505,19 @@ defineExpose({ exportImg, getImageBase64, graphMounted });
             height: 5px;
             border-radius: 50%;
         }
+    }
+
+    .log-phase-header {
+        font-size: 0.75rem;
+        margin-top: 4px;
+        gap: 6px;
+        .trace-color {
+            flex-shrink: 0;
+        }
+    }
+
+    .log-entry {
+        padding-left: 20px;
     }
 }
 </style>

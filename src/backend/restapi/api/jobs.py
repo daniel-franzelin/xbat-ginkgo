@@ -350,8 +350,10 @@ def get_logs(jobId, runNr=None):
     if result is None:
         return {"jobId": jobId, "runNr": runNr, "logs": []}, 200
 
+    app.logger.debug(result)
     return {
         "jobId": result.get("jobnr"),
         "runNr": result.get("runnr"),
-        "logs": result.get("benchmarks", [])
+        "phases": result.get("summary", {}).get("phases", []),
+        "logs": result.get("logs", [])
     }, 200

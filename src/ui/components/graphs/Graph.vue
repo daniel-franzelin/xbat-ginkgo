@@ -191,6 +191,7 @@
 
 <script setup lang="ts">
 import { useGraphForm } from "~/components/graphs/useGraphForm";
+import { getLogPhaseColor } from "~/components/graphs/useGraphBase";
 import type { NodeMap } from "~/repository/modules/nodes";
 import type { GraphLevel } from "~/types/graph";
 
@@ -237,7 +238,59 @@ const storeGraph = $graphStore.useStoreGraph(props.graphId, "default");
 const metrics = computed(() => storeGraph.metrics.value);
 const theme = useCookie("xbat_theme");
 
-const { form, metricGroups, metricLevels, metricItems } = useGraphForm(metrics);
+const { form, metricGroups, metricLevels, metricItems, logLevels } = useGraphForm(metrics);
+
+// Log filter functionality
+const logFilterInput = ref<string[]>([]);
+let logFilterTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Extract unique phases from log data; phase name is used as the filter value.
+const availableLogNames = computed(() => {
+    const logs = storeGraph.logData.value?.logs || [];
+    if (!logs.length) return [];
+
+    const seen = new Map<string, { msgs: Set<string> }>();
+    for (const log of logs) {
+        const phase = log.phase ?? 'no phase';
+        if (!seen.has(phase)) seen.set(phase, { msgs: new Set() });
+        if (log.msg) seen.get(phase)!.msgs.add(log.msg);
+    }
+
+    return Array.from(seen.entries()).map(([phase, { msgs }]) => {
+        const sample = Array.from(msgs).slice(0, 2).join(', ');
+        const subtitle = sample + (msgs.size > 2 ? `, +${msgs.size - 2} more` : '');
+        const color = getLogPhaseColor(phase === 'no phase' ? null : phase);
+        return {
+            title: phase,
+            value: phase,
+            subtitle,
+            color
+        };
+    });
+});
+
+const debouncedLogFilter = (value: string[] | null) => {
+    // Debounce the filter to avoid too many re-renders while typing
+    if (logFilterTimeout) clearTimeout(logFilterTimeout);
+    logFilterTimeout = setTimeout(() => {
+        storeGraph.modifiers.value = {
+            ...storeGraph.modifiers.value,
+            logFilter: value && value.length > 0 ? value : null
+        };
+    }, 300);
+};
+
+// Sync logFilterInput when modifiers change externally
+watch(
+    () => storeGraph.modifiers.value.logFilter,
+    (newValue) => {
+        const newArray = newValue || [];
+        if (JSON.stringify(logFilterInput.value) !== JSON.stringify(newArray)) {
+            logFilterInput.value = newArray;
+        }
+    },
+    { immediate: true }
+);
 
 watch(
     [
@@ -307,7 +360,7 @@ watch(
         console.log("logLevel changed:", oldValue, "->", newValue);
         
         if (!newValue || newValue === "None") {
-            storeGraph.logs.value = [];
+            storeGraph.logData.value = { logs: [], phases: [] };
             // Update query with new logLevel and trigger graph update
             const currentQuery = storeGraph.query.value;
             if (currentQuery.logLevel !== newValue) {
@@ -325,14 +378,24 @@ watch(
             const response = await $api.jobs.get_logs(jobId);
             console.log("Fetched logs:", response);
             
-            // Parse logs from API response - format: [[timestamp, message], ...]
-            const parsedLogs = (response?.logs || []).map((log: [string, string]) => ({
-                timestamp: parseInt(log[0]) / 1000000, // Convert microseconds to seconds
-                message: log[1]
+            // Parse logs from API response - timestamps are in microseconds, convert to seconds
+            const parsedLogs = (response?.logs || []).map((log: {ts: number, hw: string, phase: string | null, msg: string}) => ({
+                ts: log.ts / 1000000, // Convert microseconds to seconds
+                hw: log.hw,
+                phase: log.phase,
+                msg: log.msg
             }));
             
-            // Set logs first
-            storeGraph.logs.value = parsedLogs;
+            // Parse phases from API response - timestamps are in microseconds, convert to seconds
+            const parsedPhases = (response?.phases || []).map((phase: {name: string, start: number, end: number, duration_us: number}) => ({
+                name: phase.name,
+                start: phase.start / 1000000, // Convert microseconds to seconds
+                end: phase.end / 1000000,     // Convert microseconds to seconds
+                duration_us: phase.duration_us
+            }));
+            
+            // Set logData with both logs and phases
+            storeGraph.logData.value = { logs: parsedLogs, phases: parsedPhases };
             
             // Update query with new logLevel (this will NOT trigger updateData because logLevel is excluded from that watch)
             const currentQuery = storeGraph.query.value;
@@ -343,11 +406,11 @@ watch(
             // Manually trigger graph update to show the logs
             storeGraph.updateGraph();
             
-            console.log("Logs set and graph updated. Query:", storeGraph.query.value);
-            console.log("Stored logs:", storeGraph.logs.value);
+            console.log("LogData set and graph updated. Query:", storeGraph.query.value);
+            console.log("Stored logData:", storeGraph.logData.value);
         } catch (error) {
             console.error("Failed to fetch logs:", error);
-            storeGraph.logs.value = [];
+            storeGraph.logData.value = { logs: [], phases: [] };
         } finally {
             storeGraph.loading.value = false;
         }

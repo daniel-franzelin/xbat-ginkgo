@@ -1,8 +1,30 @@
 import { deepClone } from "~/utils/misc";
 import { toDDHHMMSS } from "~/utils/date";
 import Plotly from "plotly.js-basic-dist-min";
+import type { LogEntry, Phase } from "~/types/graph";
 
 export const LEGEND_WIDTH = 180;
+
+// Deterministic phase → color mapping. Consistent across shapes and hover tooltip.
+const PHASE_PALETTE = [
+    'rgb(100, 150, 255)', // blue
+    'rgb(0, 200, 100)',   // green
+    'rgb(255, 165, 0)',   // orange
+    'rgb(200, 100, 200)', // purple
+    'rgb(255, 100, 100)', // red
+    'rgb(100, 200, 200)', // cyan
+    'rgb(255, 210, 80)',  // yellow
+    'rgb(150, 100, 255)', // violet
+];
+
+export const getLogPhaseColor = (phase: string | null | undefined): string => {
+    if (!phase) return 'rgb(180, 180, 180)';
+    let hash = 0;
+    for (let i = 0; i < phase.length; i++) {
+        hash = (hash * 31 + phase.charCodeAt(i)) >>> 0;
+    }
+    return PHASE_PALETTE[hash % PHASE_PALETTE.length];
+};
 
 export const groupLabels: { [key: string]: string } = {
     cache: "Cache",
@@ -124,6 +146,7 @@ export const useGraphBase = () => {
         noData = false,
         showLegend,
         logs = [],
+        phases = [],
         jobStartTime = 0,
         interval = 5
     }: {
@@ -137,7 +160,8 @@ export const useGraphBase = () => {
         xAutotick?: Plotly.LayoutAxis["autotick"];
         noData?: boolean;
         showLegend?: boolean;
-        logs?: any[];
+        logs?: LogEntry[];
+        phases?: Phase[];
         jobStartTime?: number;
         interval?: number;
     }): Partial<Plotly.Layout> => {
@@ -204,40 +228,100 @@ export const useGraphBase = () => {
 
         if (layout.margin && !xTitle) layout.margin.b = 40;
 
-        // Generate shapes for logs if available
+        // Generate shapes for phases and logs if available
         layout.shapes = [];
-        if (logs && logs.length > 0 && jobStartTime > 0) {
-            console.log('Creating log shapes with jobStartTime:', jobStartTime, 'interval:', interval);
+        
+        // Phase colors for visual distinction
+        // const phaseColors = [
+        //     'rgba(100, 150, 255, 0.15)', // Blue
+        //     'rgba(100, 200, 100, 0.15)', // Green
+        //     'rgba(255, 180, 100, 0.15)', // Orange
+        //     'rgba(200, 100, 200, 0.15)', // Purple
+        //     'rgba(255, 150, 150, 0.15)', // Pink
+        //     'rgba(150, 200, 200, 0.15)', // Cyan
+        // ];
+        
+        // Add phase regions first (so they appear behind log lines)
+        // if (phases && phases.length > 0 && jobStartTime > 0) {
+        //     console.log('Creating phase shapes with jobStartTime:', jobStartTime, 'interval:', interval);
             
-            for (const log of logs) {
-                try {
-                    // Log timestamp is already in Unix seconds (converted from microseconds in Graph.vue)
-                    const logTimestamp = log.timestamp;
+        //     for (let i = 0; i < phases.length; i++) {
+        //         const phase = phases[i];
+        //         try {
+        //             // Phase timestamps are already in Unix seconds (converted from microseconds in Graph.vue)
+        //             const startSeconds = phase.start - jobStartTime;
+        //             const endSeconds = phase.end - jobStartTime;
                     
-                    // Calculate the relative position: (logTime - startTime) / interval = index
-                    const relativeSeconds = logTimestamp - jobStartTime;
+        //             const startIndex = Math.floor(startSeconds / interval);
+        //             const endIndex = Math.floor(endSeconds / interval);
+                    
+        //             console.log('Phase:', phase.name, 'startIndex:', startIndex, 'endIndex:', endIndex);
+                    
+        //             // Skip phases that are completely outside the graph range
+        //             if (endIndex < 0 || startIndex >= dataCount) {
+        //                 console.log('Skipping phase outside range:', phase.name);
+        //                 continue;
+        //             }
+                    
+        //             // Clamp to graph range
+        //             const clampedStart = Math.max(0, startIndex);
+        //             const clampedEnd = Math.min(dataCount - 1, endIndex);
+                    
+        //             const phaseColor = phaseColors[i % phaseColors.length];
+                    
+        //             // Add rectangular region for phase
+        //             layout.shapes!.push({
+        //                 type: 'rect',
+        //                 x0: clampedStart,
+        //                 y0: 0,
+        //                 x1: clampedEnd,
+        //                 y1: 1,
+        //                 xref: 'x',
+        //                 yref: 'paper',
+        //                 fillcolor: phaseColor,
+        //                 line: {
+        //                     width: 0
+        //                 },
+        //                 layer: 'below',
+        //                 label: {
+        //                     text: phase.name,
+        //                     textposition: 'top center',
+        //                 },
+        //             });
+        //         } catch (e) {
+        //             console.warn('Error processing phase for shape:', phase, e);
+        //         }
+        //     }
+            
+        //     console.log('Created', layout.shapes.length, 'phase shapes');
+        // }
+        
+        // Add log lines
+        if (logs && logs.length > 0 && jobStartTime > 0) {
+            // Group logs within the same 20-second window, relative to job start
+            const logGroups = new Map<number, LogEntry[]>();
+            for (const log of logs) {
+                const bucketKey = Math.floor((log.ts - jobStartTime) / 20); // 20-second buckets relative to job start
+                if (!logGroups.has(bucketKey)) logGroups.set(bucketKey, []);
+                logGroups.get(bucketKey)!.push(log);
+            }
+            
+            for (const group of logGroups.values()) {
+                const representativeLog = group[0];
+                try {
+                    const relativeSeconds = representativeLog.ts - jobStartTime;
                     const indexPosition = Math.floor(relativeSeconds / interval);
                     
-                    console.log('Log:', log.message, 'timestamp:', logTimestamp, 'relativeSeconds:', relativeSeconds, 'indexPosition:', indexPosition);
+                    if (indexPosition < 0 || indexPosition >= dataCount) continue;
                     
-                    // Skip logs that are outside the graph range
-                    if (indexPosition < 0 || indexPosition >= dataCount) {
-                        console.log('Skipping log outside range:', indexPosition, 'dataCount:', dataCount);
-                        continue;
-                    }
-                    
-                    // Determine color based on log message content
-                    let lineColor = 'rgb(255, 165, 0)'; // Orange for default
-                    const message = (log.message || '').toLowerCase();
-                    if (message.includes('error')) {
-                        lineColor = 'rgb(255, 0, 0)'; // Red for error
-                    } else if (message.includes('warning')) {
-                        lineColor = 'rgb(255, 165, 0)'; // Orange for warning
-                    } else if (message.includes('start') || message.includes('end')) {
-                        lineColor = 'rgb(0, 200, 100)'; // Green for start/end markers
-                    } else if (message.includes('step')) {
-                        lineColor = 'rgb(100, 150, 255)'; // Blue for step markers
-                    }
+                    const extraCount = group.length - 1;
+                    const labelText = extraCount > 0
+                        ? `${representativeLog.phase ?? representativeLog.msg} (+${extraCount} more)`
+                        : representativeLog.phase
+                            ? `${representativeLog.phase}: ${representativeLog.msg}`
+                            : representativeLog.msg;
+
+                    const lineColor = getLogPhaseColor(representativeLog.phase);
                     
                     layout.shapes!.push({
                         type: 'line',
@@ -253,16 +337,14 @@ export const useGraphBase = () => {
                             dash: 'dash'
                         },
                         label: {
-                            text: log.message,
+                            text: labelText,
                             yanchor: 'top',
                         },
                     });
                 } catch (e) {
-                    console.warn('Error processing log for shape:', log, e);
+                    console.warn('Error processing log group for shape:', group, e);
                 }
             }
-            
-            console.log('Created', layout.shapes.length, 'log shapes');
         }
 
         return layout;

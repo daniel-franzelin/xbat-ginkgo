@@ -8,7 +8,8 @@ import type {
     GraphSettings,
     GraphStyling,
     GraphModifiers,
-    GraphLevel
+    GraphLevel,
+    LogData
 } from "~/types/graph";
 import { useEventBus } from "@vueuse/core";
 import { deepEqual } from "~/utils/misc";
@@ -37,7 +38,7 @@ export interface StoreGraph extends StoreBaseGraph {
     modifiers: GraphModifiers;
     raw: { [key: string]: GraphRawData }; // save by jobId due to multi-job graphs
     settings: GraphSettings;
-    logs: any[];
+    logData: LogData;
 }
 
 export type GraphQueryRoofline = {
@@ -118,7 +119,7 @@ export interface StoreGraphReturnDefault extends StoreGraphReturnBase {
     metrics: Ref<Metrics>;
     modifiers: Ref<GraphModifiers>;
     settings: Ref<GraphSettings>;
-    logs: Ref<any[]>;
+    logData: Ref<LogData>;
 }
 
 export interface StoreGraphReturnRoofline extends StoreGraphReturnBase {
@@ -230,7 +231,7 @@ export const useGraphStore = defineStore("graph", () => {
                 nodes: {},
                 noData: false,
                 loading: false,
-                logs: []
+                logData: { logs: [], phases: [] }
             };
         else {
             graphs.value[id] = {
@@ -460,10 +461,10 @@ export const useGraphStore = defineStore("graph", () => {
                         graphRef.value.metrics = value;
                     }
                 }),
-                logs: computed({
-                    get: () => graphRef.value?.logs || [],
-                    set: (value: any[]) => {
-                        graphRef.value.logs = value;
+                logData: computed({
+                    get: () => graphRef.value?.logData || { logs: [], phases: [] },
+                    set: (value: LogData) => {
+                        graphRef.value.logData = value;
                         // Don't trigger updateGraph here - it will be called when the graph needs to re-render
                     }
                 }),

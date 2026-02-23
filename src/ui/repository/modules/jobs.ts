@@ -149,7 +149,8 @@ class JobModule extends FetchFactory {
         return this.call<{
             jobId: number;
             runNr?: number;
-            logs: Array<[string, string]>;
+            logs: Array<{ts: number, hw: string, phase: string | null, msg: string}>;
+            phases: Array<{name: string, start: number, end: number, duration_us: number}>;
         }>(
             "GET",
             `${this.RESOURCE}/${jobId}/logs` + (runNr !== undefined ? `?runNr=${runNr}` : ""),
