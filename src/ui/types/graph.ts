@@ -40,7 +40,6 @@ export interface GraphQuery {
     metric: string;
     level: GraphLevel;
     deciles: boolean;
-    logLevel?: string;
 }
 
 export interface GraphSettings {
@@ -161,7 +160,7 @@ export type GraphOverrides = {
 };
 
 export interface LogEntry {
-    ts: number;      // timestamp in microseconds
+    ts: number;      // timestamp in seconds
     hw: string;      // hardware/thread id
     phase: string | null;
     msg: string;
@@ -169,12 +168,20 @@ export interface LogEntry {
 
 export interface Phase {
     name: string;
-    start: number;   // timestamp in microseconds
-    end: number;     // timestamp in microseconds
+    occurrence: number;  // which occurrence of this phase (0, 1, 2...)
+    started_at: number;  // timestamp in microseconds
+    finished_at: number; // timestamp in microseconds
     duration_us: number;
 }
 
+// Phase event from the logs API
+export interface PhaseEvent {
+    ts: number;      // timestamp in microseconds
+    hw: string;      // hardware/thread id
+    msg: string;     // message
+}
+
 export interface LogData {
-    logs: LogEntry[];
-    phases: Phase[];
+    logs: LogEntry[];  // Individual log entries (used for graph shapes)
+    phases: Phase[];   // Available phases from job response
 }

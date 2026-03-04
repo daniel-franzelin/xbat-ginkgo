@@ -10,6 +10,14 @@ export interface JobListShort {
     data: JobShort[];
 }
 
+export interface JobPhase {
+    name: string;
+    occurrence: number;
+    started_at: number;  // timestamp in microseconds
+    finished_at: number; // timestamp in microseconds
+    duration_us: number;
+}
+
 export interface Job {
     configuration: Configuration;
     identificator: string;
@@ -30,6 +38,7 @@ export interface Job {
     captureEnd: Date;
     jobInfo: JobInfo;
     cli?: boolean;
+    phases?: JobPhase[];  // Available phases for this job
 }
 
 export interface JobInfo {
@@ -145,15 +154,31 @@ class JobModule extends FetchFactory {
         return this.call<NodeMap>("GET", url, undefined) as Promise<NodeMap>;
     }
     
-    async get_logs(jobId: number, runNr?: number) {
+    /**
+     * Fetch events for specific phases.
+     * @param jobId - Job ID
+     * @param runNr - Run number
+     * @param phases - Array of {name, occurrence} pairs to fetch events for
+     */
+    async getPhaseEvents(
+        jobId: number, 
+        runNr: number, 
+        phases: Array<{name: string, occurrence: number}>
+    ) {
+        const phaseParams = phases.map(p => `phases=${encodeURIComponent(p.name)}&occurrences=${p.occurrence}`).join('&');
         return this.call<{
             jobId: number;
-            runNr?: number;
-            logs: Array<{ts: number, hw: string, phase: string | null, msg: string}>;
-            phases: Array<{name: string, start: number, end: number, duration_us: number}>;
+            runNr: number;
+            phases: Array<{
+                name: string;
+                occurrence: number;
+                started_at: number;
+                finished_at: number;
+                events: Array<{ts: number, hw: string, msg: string}>;
+            }>;
         }>(
             "GET",
-            `${this.RESOURCE}/${jobId}/logs` + (runNr !== undefined ? `?runNr=${runNr}` : ""),
+            `${this.RESOURCE}/${jobId}/logs?runNr=${runNr}&${phaseParams}`,
             undefined // body
         );
     }

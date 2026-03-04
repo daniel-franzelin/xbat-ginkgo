@@ -163,20 +163,11 @@ export const useGraph = () => {
                 x.visible = x.uid ? vis.has(x.uid) : true;
             });
         }
-        console.log("LogLevel before createLayout: ", storeGraph.query.value.logLevel, " logData:", storeGraph.logData.value, " with startTime: " + all.startTime);
         
-        // Filter logs by phase (logFilter values are phase names)
-        let filteredLogs: LogEntry[] = storeGraph.logData.value?.logs || [];
-        const logFilter = storeGraph.modifiers.value.logFilter;
-        if (logFilter && logFilter.length > 0) {
-            filteredLogs = filteredLogs.filter((log: LogEntry) => {
-                const phase = log.phase ?? 'no phase';
-                return logFilter.some(f => phase === f);
-            });
-        }
-        
-        // Get phases
+        // Get logs and phases from logData (populated when user selects phases in the filter)
+        const logs: LogEntry[] = storeGraph.logData.value?.logs || [];
         const phases: Phase[] = storeGraph.logData.value?.phases || [];
+        const hasLogData = logs.length > 0 || phases.length > 0;
         
         const layout = createLayout({
             dataCount: Math.max(all.dataCount),
@@ -188,12 +179,8 @@ export const useGraph = () => {
             rangeslider: storeGraph.preferences.value.rangeslider,
             noData: storeGraph.noData.value || !all.traces.length,
             showLegend: styling?.showLegend ?? true,
-            logs: storeGraph.query.value.logLevel && storeGraph.query.value.logLevel !== "None" 
-                ? filteredLogs 
-                : [],
-            phases: storeGraph.query.value.logLevel && storeGraph.query.value.logLevel !== "None"
-                ? phases
-                : [],
+            logs: hasLogData ? logs : [],
+            phases: hasLogData ? phases : [],
             jobStartTime: all.startTime,
             interval: all.interval
         });
@@ -579,10 +566,12 @@ export const useGraph = () => {
         }
 
         // Get start time from first trace (measurements have start date)
-        const startTime = measurements[0]?.start 
-            ? new Date(measurements[0].start).getTime() / 1000 
+        // IMPORTANT: Append 'Z' to treat the ISO string as UTC, not local time
+        // This ensures consistency with phase timestamps which are Unix timestamps (always UTC)
+        const startTimeString = measurements[0]?.start;
+        const startTime = startTimeString
+            ? new Date(startTimeString.endsWith('Z') ? startTimeString : startTimeString + 'Z').getTime() / 1000 
             : 0;
-        console.log("Assembled graph for job", jobId, "with", traces.length, "traces, startTime:", startTime, " original start: ", measurements[0]?.start, " date version:", measurements[0]?.start ? new Date(measurements[0].start) : "N/A");
         return {
             traces,
             dataCount,

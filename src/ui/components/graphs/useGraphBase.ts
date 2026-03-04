@@ -231,72 +231,6 @@ export const useGraphBase = () => {
         // Generate shapes for phases and logs if available
         layout.shapes = [];
         
-        // Phase colors for visual distinction
-        // const phaseColors = [
-        //     'rgba(100, 150, 255, 0.15)', // Blue
-        //     'rgba(100, 200, 100, 0.15)', // Green
-        //     'rgba(255, 180, 100, 0.15)', // Orange
-        //     'rgba(200, 100, 200, 0.15)', // Purple
-        //     'rgba(255, 150, 150, 0.15)', // Pink
-        //     'rgba(150, 200, 200, 0.15)', // Cyan
-        // ];
-        
-        // Add phase regions first (so they appear behind log lines)
-        // if (phases && phases.length > 0 && jobStartTime > 0) {
-        //     console.log('Creating phase shapes with jobStartTime:', jobStartTime, 'interval:', interval);
-            
-        //     for (let i = 0; i < phases.length; i++) {
-        //         const phase = phases[i];
-        //         try {
-        //             // Phase timestamps are already in Unix seconds (converted from microseconds in Graph.vue)
-        //             const startSeconds = phase.start - jobStartTime;
-        //             const endSeconds = phase.end - jobStartTime;
-                    
-        //             const startIndex = Math.floor(startSeconds / interval);
-        //             const endIndex = Math.floor(endSeconds / interval);
-                    
-        //             console.log('Phase:', phase.name, 'startIndex:', startIndex, 'endIndex:', endIndex);
-                    
-        //             // Skip phases that are completely outside the graph range
-        //             if (endIndex < 0 || startIndex >= dataCount) {
-        //                 console.log('Skipping phase outside range:', phase.name);
-        //                 continue;
-        //             }
-                    
-        //             // Clamp to graph range
-        //             const clampedStart = Math.max(0, startIndex);
-        //             const clampedEnd = Math.min(dataCount - 1, endIndex);
-                    
-        //             const phaseColor = phaseColors[i % phaseColors.length];
-                    
-        //             // Add rectangular region for phase
-        //             layout.shapes!.push({
-        //                 type: 'rect',
-        //                 x0: clampedStart,
-        //                 y0: 0,
-        //                 x1: clampedEnd,
-        //                 y1: 1,
-        //                 xref: 'x',
-        //                 yref: 'paper',
-        //                 fillcolor: phaseColor,
-        //                 line: {
-        //                     width: 0
-        //                 },
-        //                 layer: 'below',
-        //                 label: {
-        //                     text: phase.name,
-        //                     textposition: 'top center',
-        //                 },
-        //             });
-        //         } catch (e) {
-        //             console.warn('Error processing phase for shape:', phase, e);
-        //         }
-        //     }
-            
-        //     console.log('Created', layout.shapes.length, 'phase shapes');
-        // }
-        
-        // Add log lines
         if (logs && logs.length > 0 && jobStartTime > 0) {
             // Group logs within the same 20-second window, relative to job start
             const logGroups = new Map<number, LogEntry[]>();
@@ -312,7 +246,10 @@ export const useGraphBase = () => {
                     const relativeSeconds = representativeLog.ts - jobStartTime;
                     const indexPosition = Math.floor(relativeSeconds / interval);
                     
-                    if (indexPosition < 0 || indexPosition >= dataCount) continue;
+                    if (indexPosition < 0 || indexPosition >= dataCount) {
+                        console.log('Skipping log - out of range');
+                        continue;
+                    }
                     
                     const extraCount = group.length - 1;
                     const labelText = extraCount > 0

@@ -333,27 +333,64 @@ def register(jobId):
         "benchmarkRequired": hash_missing
     }, 200
 
-def get_logs(jobId, runNr=None):
+def get_logs(jobId, runNr=None, phases=None, occurrences=None):
     """
     Retrieves job logs for specific jobId.
     
     :param jobId: job id
     :param runNr: optional run number to filter logs
+    :param phases: optional phase names to filter
+    :param occurrences: optional occurrence numbers to filter (paired with phases)
     :return: logs with meta data
     """
-    query = {"jobnr": jobId}
+    query = {"jobId": jobId}
 
     if runNr is not None:
-        query["runnr"] = runNr
-    result = db.getOne("benchmarks_data", query)
+        query["runNr"] = runNr
+    
+    # Query all phases for this jobId (and runNr if specified)
+    result_phases = db.getMany("phases", query, {"_id": False})
 
-    if result is None:
-        return {"jobId": jobId, "runNr": runNr, "logs": []}, 200
+    if result_phases is None:
+        return {"jobId": jobId, "runNr": runNr, "phases": []}, 200
 
-    app.logger.debug(result)
+    # Build filter criteria if phases/occurrences are provided
+    filter_criteria = None
+    if phases is not None and occurrences is not None:
+        # Create pairs of (phase, occurrence) for filtering
+        filter_criteria = set(zip(phases, occurrences))
+    elif phases is not None:
+        # Only filter by phase names
+        filter_criteria = {(p, None) for p in phases}
+
+    # Filter by phase names and/or occurrences if provided
+    filtered_phases = []
+    for phase_doc in result_phases:
+        phase_name = phase_doc.get("phase")
+        phase_occurrence = phase_doc.get("occurrence")
+        
+        # Check if this phase should be included
+        if filter_criteria is None:
+            # No filter, include all
+            include = True
+        elif phases is not None and occurrences is not None:
+            # Filter by both phase and occurrence
+            include = (phase_name, phase_occurrence) in filter_criteria
+        else:
+            # Filter by phase name only
+            include = any(p == phase_name for p, _ in filter_criteria)
+        
+        if include:
+            filtered_phases.append({
+                "name": phase_name,
+                "occurrence": phase_occurrence,
+                "started_at": phase_doc.get("started_at"),
+                "finished_at": phase_doc.get("finished_at"),
+                "events": phase_doc.get("events", [])
+            })
+
     return {
-        "jobId": result.get("jobnr"),
-        "runNr": result.get("runnr"),
-        "phases": result.get("summary", {}).get("phases", []),
-        "logs": result.get("logs", [])
+        "jobId": jobId,
+        "runNr": runNr,
+        "phases": filtered_phases
     }, 200

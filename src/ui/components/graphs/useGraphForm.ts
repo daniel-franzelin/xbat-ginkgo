@@ -9,7 +9,6 @@ export const useGraphForm = (metrics: Ref<Metrics>) => {
         group: null,
         metric: null,
         level: null,
-        logLevel: null
     });
 
     const metricGroups = computed(() => {
@@ -50,10 +49,6 @@ export const useGraphForm = (metrics: Ref<Metrics>) => {
         return availableLevels;
     });
 
-    const logLevels = computed(() => {
-        return ["None", "Logs only"];
-    });
-
     watch(
         () => form.group,
         (v) => {
@@ -85,6 +80,5 @@ export const useGraphForm = (metrics: Ref<Metrics>) => {
         metricGroups,
         metricItems,
         metricLevels,
-        logLevels
     };
 };

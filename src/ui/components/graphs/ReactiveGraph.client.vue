@@ -225,8 +225,12 @@ const logsByIndex = computed(() => {
 
     const interval = firstTrace.interval || 5;
     // start is a Date – convert to Unix seconds
-    const startTime = new Date(firstTrace.start).getTime() / 1000;
+    const startTimeString = firstTrace.start;
 
+    const startTime = startTimeString
+            ? new Date(startTimeString.endsWith('Z') ? startTimeString : startTimeString + 'Z').getTime() / 1000 
+            : 0;
+            
     // Group by 20-second buckets relative to job start (mirrors useGraphBase.ts)
     const logGroups = new Map<number, LogEntry[]>();
     for (const log of logs) {
@@ -249,8 +253,45 @@ const logStartTime = computed(() => {
     const sg = storeGraph as StoreGraphReturnDefault;
     const firstTrace = Object.values(sg.raw.value)[0]?.traces?.[0];
     if (!firstTrace) return 0;
-    return new Date(firstTrace.start).getTime() / 1000;
+    const startTimeString = firstTrace.start;
+
+    return startTimeString
+            ? new Date(startTimeString.endsWith('Z') ? startTimeString : startTimeString + 'Z').getTime() / 1000 
+            : 0;
 });
+
+// Get the current interval for the graph (used for converting x-values to indices)
+const currentInterval = computed(() => {
+    if (props.type !== "default") return 5;
+    const sg = storeGraph as StoreGraphReturnDefault;
+    const firstTrace = Object.values(sg.raw.value)[0]?.traces?.[0];
+    return firstTrace?.interval || 5;
+});
+
+// Parse a timestamp string in the format "DD HH:MM:SS" or "HH:MM:SS" back to seconds
+const parseTimestampToSeconds = (timestamp: unknown): number | null => {
+    if (typeof timestamp === 'number') return timestamp;
+    if (!timestamp || typeof timestamp !== 'string') return null;
+    
+    const parts = timestamp.trim().split(' ');
+    let days = 0;
+    let timeStr = timestamp;
+    
+    // Check if there's a day component (format: "DD HH:MM:SS")
+    if (parts.length === 2) {
+        days = parseInt(parts[0], 10) || 0;
+        timeStr = parts[1];
+    }
+    
+    const timeParts = timeStr.split(':');
+    if (timeParts.length !== 3) return null;
+    
+    const hours = parseInt(timeParts[0], 10) || 0;
+    const minutes = parseInt(timeParts[1], 10) || 0;
+    const seconds = parseInt(timeParts[2], 10) || 0;
+    
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+};
 
 // Groups the current hover's log entries by phase for display.
 const hoverLogsByPhase = computed(() => {
@@ -317,6 +358,27 @@ const registerHandlers = () => {
         const time = data.points.length ? data.points[0].x : "";
         const unit = traces[0].data.unit || "";
 
+        // Get log entries for the current hover position
+        // Use x-value to calculate index instead of pointIndex for robustness during zoom
+        let logIndex: number | undefined = undefined;
+        
+        // First try to calculate from x-value (timestamp string)
+        const seconds = parseTimestampToSeconds(time);
+        if (seconds !== null) {
+            logIndex = Math.floor(seconds / currentInterval.value);
+        }
+        
+        // Fallback to pointIndex if parsing failed
+        if (logIndex === undefined) {
+            logIndex = data.points[0]?.pointIndex;
+        }
+        
+        if (logIndex !== undefined && logsByIndex.value.has(logIndex)) {
+            hoverText.logs = logsByIndex.value.get(logIndex) || [];
+        } else {
+            hoverText.logs = [];
+        }
+
         hoverText.header = `${time} ${unit ? `[${unit}]` : ""}`;
 
         if (traces.length > CHUNKS * CHUNK_SIZE) {
@@ -334,10 +396,7 @@ const registerHandlers = () => {
                     : CHUNK_SIZE
             )
         ];
-
-        // populate log entries for the hovered x position (optional – only shown when logs exist)
-        const xIndex = data.points[0].pointNumber;
-        hoverText.logs = logsByIndex.value.get(xIndex) ?? [];
+        
         const hoverSize = graphCardRef.value.$el.getBoundingClientRect();
 
         if (!graphSize.value) return;

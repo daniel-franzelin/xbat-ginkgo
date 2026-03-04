@@ -162,28 +162,19 @@ def _process_job(jobId, directories, job_info):
                   upsert=True)
 
 def import_log_to_mongodb(file_path, jobnr: int, runnr: int) -> None:
-    """
-    Liest die getimestampte Log-Datei ein und speichert die Benchmark-Daten
-    im gewünschten Format (jobnr, runnr, summary, logs) in der Datenbank.
-    
-    CSV-Format: timestamp_us, HW:thread_id, phase_name, message
-    """
     file_path = Path(file_path)
     if not file_path.is_file():
-        logger.warning(
-            "Timestamped log file not found at: %s. Skipping log insertion.",
-            file_path
-        )
+        print(f"Log file not found at: {file_path}. Skipping.")
         return
 
-    raw_events = []
-    phase_stats = {}  # {phase_name: {"start": min_ts, "end": max_ts}}
+    occurrence_counter = {}
+    phase_docs = {}
+    active_phases = {}
 
     try:
         with open(file_path, 'r') as f:
-            # Erste Zeile (Header) überspringen
             next(f)
-            
+
             for line in f:
                 line = line.strip()
                 if not line:
@@ -192,77 +183,89 @@ def import_log_to_mongodb(file_path, jobnr: int, runnr: int) -> None:
                 parts = line.split(',')
                 if len(parts) < 2:
                     continue
-                
-                # Parsing: timestamp, HW:id, phase, message
+
                 try:
                     ts = int(parts[0])
                 except ValueError:
                     continue
-                
-                # thread_id: "HW:6" -> "6", "-" -> None
+
                 hw_raw = parts[1].strip() if len(parts) > 1 else "-"
-                if hw_raw == "-":
-                    hw = None
-                elif hw_raw.startswith("HW:"):
-                    hw = hw_raw[3:]
-                else:
-                    hw = hw_raw
-                
-                # phase: "-" -> None
+                hw = None if hw_raw == "-" else (hw_raw[3:] if hw_raw.startswith("HW:") else hw_raw)
+
                 phase_raw = parts[2].strip() if len(parts) > 2 else "-"
                 phase_name = None if phase_raw == "-" else phase_raw
-                
+
                 msg = parts[3].strip() if len(parts) > 3 else ""
 
-                # Event speichern
-                raw_events.append({
-                    "ts": ts,
-                    "hw": hw,
-                    "phase": phase_name,
-                    "msg": msg
-                })
+                event = {"ts": ts, "hw": hw, "msg": msg}
 
-                # Phasen-Zeiten tracken (nur wenn phase vorhanden)
                 if phase_name:
-                    if phase_name not in phase_stats:
-                        phase_stats[phase_name] = {"start": ts, "end": ts}
-                    else:
-                        if ts < phase_stats[phase_name]["start"]:
-                            phase_stats[phase_name]["start"] = ts
-                        if ts > phase_stats[phase_name]["end"]:
-                            phase_stats[phase_name]["end"] = ts
+                    if "start" in msg.lower():
+                        occ = occurrence_counter.get(phase_name, 0)
+                        occurrence_counter[phase_name] = occ + 1
+                        active_phases[phase_name] = occ
 
-        if not raw_events:
-            logger.warning("No valid data found in log file: %s", file_path)
+                        phase_docs[(phase_name, occ)] = {
+                            "jobnr": jobnr,
+                            "runnr": runnr,
+                            "phase": phase_name,
+                            "occurrence": occ,
+                            "started_at": ts,
+                            "finished_at": None,
+                            "events": [event]
+                        }
+
+                    elif "end" in msg.lower():
+                        occ = active_phases.get(phase_name)
+                        if occ is not None:
+                            doc = phase_docs[(phase_name, occ)]
+                            doc["finished_at"] = ts
+                            doc["events"].append(event)
+                            del active_phases[phase_name]
+                        else:
+                            print(f"Warning: 'end' ohne 'start' für Phase '{phase_name}' bei ts={ts}")
+
+                    else:
+                        occ = active_phases.get(phase_name)
+                        if occ is not None:
+                            phase_docs[(phase_name, occ)]["events"].append(event)
+                else:
+                    if ("general", 0) not in phase_docs:
+                        phase_docs[("general", 0)] = {
+                            "jobnr": jobnr, "runnr": runnr,
+                            "phase": "general", "occurrence": 0,
+                            "started_at": ts, "finished_at": None,
+                            "events": []
+                        }
+                    phase_docs[("general", 0)]["events"].append(event)
+
+
+        if not phase_docs:
+            print(f"No phases found in log file: {file_path}")
             return
 
-        # Zusammenfassung der Phasen
-        phases_summary = []
-        for name, times in phase_stats.items():
-            phases_summary.append({
-                "name": name,
-                "start": times["start"],
-                "end": times["end"],
-                "duration_us": times["end"] - times["start"]
-            })
+        phases_summary = [
+            {
+                "name": doc["phase"],
+                "occurrence": doc["occurrence"],
+                "started_at": doc["started_at"],
+                "finished_at": doc["finished_at"],
+                "duration_us": (doc["finished_at"] - doc["started_at"]) if doc["finished_at"] and doc["started_at"] else None
+            }
+            for doc in phase_docs.values()
+        ]
 
-        document = {
-            "jobnr": jobnr,
-            "runnr": runnr,
-            "summary": {"phases": phases_summary},
-            "logs": raw_events
-        }
+        db.updateOne("jobs", {"jobId": jobnr, "runNr": runnr}, {
+            "$set": {"phases": phases_summary}
+        })
 
-        db.replaceOne("benchmarks_data",
-                      {"jobnr": jobnr, "runnr": runnr},
-                      document,
-                      upsert=True)
-        logger.debug("Successfully inserted log data for job %d, run %d into 'benchmarks_data'", jobnr, runnr)
+        for doc in phase_docs.values():
+            db.insertOne("phases", doc)
 
     except FileNotFoundError:
-        logger.error("Log file not found: %s", file_path)
+        print(f"Log file not found: {file_path}")
     except Exception as e:
-        logger.error("Error processing log file for job %d: %s", jobnr, e)
+        print(f"Error processing log file for job {jobnr}, run {runnr}: {e}")
 
 def process(runNr):
     """

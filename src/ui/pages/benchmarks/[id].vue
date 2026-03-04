@@ -182,6 +182,8 @@
                                 >
                                     <GraphWrapper
                                         :jobIds="[jobId]"
+                                        :runNr="runNr"
+                                        :jobPhases="currentJob?.phases || []"
                                         :metrics="metrics?.[jobId] || {}"
                                         :nodes="nodeInfo"
                                         :defaultGroup="

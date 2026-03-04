@@ -354,6 +354,26 @@ paths:
             type: integer
           required: false
           description: Optional run number to filter logs
+        - name: phases
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          required: false
+          description: Optional phase names to filter
+          style: form
+          explode: true
+        - name: occurrences
+          in: query
+          schema:
+            type: array
+            items:
+              type: integer
+          required: false
+          description: Optional occurrence numbers to filter (paired with phases)
+          style: form
+          explode: true
       responses:
         "200":
           description: Retrieved Logs
@@ -366,8 +386,21 @@ paths:
                     type: integer
                   runNr:
                     type: integer
-                  logs:
+                  phases:
                     type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        occurrence:
+                          type: integer
+                        started_at:
+                          type: integer
+                        finished_at:
+                          type: integer
+                        events:
+                          type: array
                     items:
                       type: object
       # security:

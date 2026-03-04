@@ -75,7 +75,6 @@ const defaultQuery: GraphQuery = {
     metric: "",
     level: "job",
     deciles: false,
-    logLevel: "None"
 };
 
 const defaultGraphQueryRoofline: GraphQueryRoofline = {
@@ -196,7 +195,6 @@ export const useGraphStore = defineStore("graph", () => {
         level: GraphLevel = "job",
         node: string = "",
         deciles: boolean = false,
-        logLevel: string = "None"
     ): GraphQuery => {
         let query = {
             jobIds: Array.isArray(jobIds) ? jobIds : [jobIds],
@@ -205,7 +203,6 @@ export const useGraphStore = defineStore("graph", () => {
             level: level,
             node: level != "job" ? node : "",
             deciles: deciles,
-            logLevel: logLevel
         };
         return query;
     };
@@ -393,16 +390,8 @@ export const useGraphStore = defineStore("graph", () => {
                             prevQuery.metric === value.metric &&
                             prevQuery.level === value.level &&
                             prevQuery.node === value.node &&
-                            prevQuery.deciles === value.deciles &&
-                            prevQuery.logLevel !== value.logLevel;
-                        
-                        if (onlyLogLevelChange) {
-                            // Just update the query without refetching measurements
-                            graphRef.value.query = value;
-                            // updateGraph will be called manually from the logLevel watcher
-                            return;
-                        }
-                        
+                            prevQuery.deciles === value.deciles
+                                              
                         graphRef.value.raw = {};
                         graphRef.value.query = value;
 
@@ -462,7 +451,10 @@ export const useGraphStore = defineStore("graph", () => {
                     }
                 }),
                 logData: computed({
-                    get: () => graphRef.value?.logData || { logs: [], phases: [] },
+                    get: () => {
+                        const result = graphRef.value?.logData || { logs: [], phases: [] };
+                        return result;
+                    },
                     set: (value: LogData) => {
                         graphRef.value.logData = value;
                         // Don't trigger updateGraph here - it will be called when the graph needs to re-render
